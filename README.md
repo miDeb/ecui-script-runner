@@ -9,7 +9,7 @@ To run this server in a Docker container, follow these steps:
 1.  **Build the Docker Image:**
 
     ```bash
-    docker build -t script-runner-server .
+    docker build -t script-runner .
     ```
 
 2.  **Run the Docker Container:**
@@ -17,13 +17,13 @@ To run this server in a Docker container, follow these steps:
     To run the container with support for custom scripts, you need to mount a directory from your host to the container and provide the `ECUI_CONFIG_PATH` environment variable.
 
     ```bash
-    docker run -p 8000:8000 \
+    docker run \
       -v /path/to/your/config:/config \
       -e ECUI_CONFIG_PATH=/config \
-      script-runner-server
+      --network host \
+      script-runner
     ```
 
-    - `-p 8000:8000`: This maps port 8000 of your host machine to port 8000 inside the Docker container.
     - `-v /path/to/your/config:/config`: This mounts a directory from your host machine (e.g., `/path/to/your/config`) to the `/config` directory inside the container. Your custom scripts should be placed in a `scripts` subdirectory within this mounted volume (e.g., `/path/to/your/config/scripts`).
     - `-e ECUI_CONFIG_PATH=/config`: This environment variable tells the server where to look for custom scripts.
 

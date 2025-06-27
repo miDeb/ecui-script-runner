@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-CONTAINER_NAME="script-runner-server-instance"
+CONTAINER_NAME="script-runner"
 
 if [ -z "${ECUI_CONFIG_PATH}" ]; then
   echo "Error: ECUI_CONFIG_PATH environment variable is not set."
@@ -13,10 +13,12 @@ echo "Stopping and removing any existing container named ${CONTAINER_NAME}"
 docker rm -f ${CONTAINER_NAME} 2>/dev/null || true
 
 echo "Building the Docker image..."
-docker build -t script-runner-server .
+docker build -t script-runner .
 
-echo "Running the Docker container..."
-docker run --name ${CONTAINER_NAME} -p 8000:8000 \
+echo "Running the Docker container in detached mode..."
+docker run -d --name ${CONTAINER_NAME} \
   -v "${ECUI_CONFIG_PATH}:/config" \
   -e ECUI_CONFIG_PATH=/config \
-  script-runner-server
+  --network host \
+  script-runner
+echo "Container ${CONTAINER_NAME} started in background."
