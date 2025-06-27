@@ -1,5 +1,4 @@
 import shutil
-import asyncio
 import http.server
 import json
 import os
@@ -8,11 +7,15 @@ import subprocess
 import tempfile
 from http import HTTPStatus
 from pathlib import Path
+import threading
 
-PORT = 8000
 TEMP_DIR = Path(tempfile.gettempdir())
 CONFIG_PATH = Path(os.environ.get("ECUI_CONFIG_PATH", "/config"))
 SCRIPTS_DIR = CONFIG_PATH / "scripts"
+TIMEOUT_SECONDS = 5  # 15 minutes timeout for script execution
+with open(CONFIG_PATH / "config.json") as f:
+    config_json = json.load(f)
+PORT = config_json.get("SCRIPT_RUNNER", {}).get("port", 8000)
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -26,7 +29,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if self.path.startswith("/download/"):
             self.download_file()
         else:
-            super().do_GET()
+            self.send_error(HTTPStatus.NOT_FOUND, "Endpoint not found")
 
     def execute_script(self):
         try:
@@ -75,6 +78,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.end_headers()
 
+            self.wfile.write(
+                f"Executing: {command_path} {' '.join(processed_args)}\n".encode(
+                    "utf-8"
+                )
+            )
+            self.wfile.flush()
+
             process = subprocess.Popen(
                 [command_path] + processed_args,
                 stdout=subprocess.PIPE,
@@ -82,12 +92,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 text=True,
             )
 
-            for line in iter(process.stdout.readline, ""):
-                self.wfile.write(line.encode("utf-8"))
-                self.wfile.flush()
+            def stream_output(pipe, wfile):
+                for line in iter(pipe.readline, ""):
+                    wfile.write(line.encode("utf-8"))
+                    wfile.flush()
+                pipe.close()
 
-            process.stdout.close()
-            exit_code = process.wait()
+            output_thread = threading.Thread(
+                target=stream_output, args=(process.stdout, self.wfile)
+            )
+            output_thread.start()
+
+            try:
+                process.wait(timeout=TIMEOUT_SECONDS)
+                exit_code = process.returncode
+            except subprocess.TimeoutExpired:
+                process.kill()
+                self.wfile.write(
+                    f"\n---PROCESS-TIMEOUT---\nProcess exceeded time limit of {TIMEOUT_SECONDS} seconds and was terminated.\n".encode("utf-8")
+                )
+                self.wfile.flush()
+                exit_code = -1
+
+            output_thread.join()
 
             if temp_files and exit_code == 0:
                 download_info = {"temp_files": []}
@@ -123,7 +150,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "application/octet-stream")
                 self.send_header(
-                    "Content-Disposition", f'attachment; filename="{file_name}"'
+                    "Content-Disposition", "attachment"
                 )
                 self.end_headers()
                 with open(file_path, "rb") as f:
@@ -134,7 +161,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(e))
 
 
-socketserver.TCPServer.allow_reuse_address = True
-with socketserver.TCPServer(("", PORT), Handler) as httpd:
+socketserver.ThreadingTCPServer.allow_reuse_address = True
+with socketserver.ThreadingTCPServer(("", PORT), Handler) as httpd:
     print("serving at port", PORT)
     httpd.serve_forever()
